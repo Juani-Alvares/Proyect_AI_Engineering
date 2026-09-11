@@ -1,53 +1,28 @@
-"""Small asynchronous validation script for the unified client."""
+"""Asynchronous example for the technical entity extraction pipeline."""
 
 import asyncio
-import os
+import logging
 
 from dotenv import load_dotenv
 
-from src.manager import AsyncLLMManager
-from src.schemas import ChatMessage, ModelConfig
-
-
-def default_model(provider: str) -> str:
-    if provider == "anthropic":
-        return "claude-sonnet-5"
-    return "gpt-4o-mini"
+from src.pipeline.chain import process_text
 
 
 async def main() -> None:
     load_dotenv()
-    provider = os.getenv("LLM_PROVIDER", "openai").lower()
-    model = os.getenv("LLM_MODEL") or default_model(provider)
+    logging.basicConfig(level=logging.INFO, format="%(levelname)s: %(message)s")
+    text = (
+        "La API está desarrollada con FastAPI, utiliza Redis como caché y "
+        "PostgreSQL como base de datos. Se detectaron problemas de conexiones "
+        "concurrentes y aumento de latencia."
+    )
 
     try:
-        config = ModelConfig(
-            model=model,
-            temperature=float(os.getenv("LLM_TEMPERATURE", "0.7")),
-            max_tokens=int(os.getenv("LLM_MAX_TOKENS", "300")),
-        )
-        manager = AsyncLLMManager(provider)
-    except (ValueError, TypeError) as error:
-        print(f"Error de configuración: {error}")
-        return
-
-    messages = [ChatMessage(role="user", content="¿Qué es la entropía?")]
-
-    try:
-        print(f"Proveedor: {provider} | Modelo: {config.model}\n")
-        print("Respuesta normal:")
-        response = await manager.generate(messages, config)
-        if response.error:
-            print(f"Error: {response.error}")
-        else:
-            print(response.content)
-
-        print("\nStreaming:")
-        async for chunk in manager.stream(messages, config):
-            print(chunk, end="", flush=True)
-        print()
-    finally:
-        await manager.close()
+        result = await process_text(text)
+        print("Resultado validado:")
+        print(result.model_dump_json(indent=2))
+    except Exception as error:
+        print(f"No fue posible procesar el texto: {error}")
 
 
 if __name__ == "__main__":

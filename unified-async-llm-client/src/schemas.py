@@ -1,5 +1,6 @@
 """Pydantic models used by the clients."""
 
+from enum import Enum
 from typing import Literal
 
 from pydantic import BaseModel, Field, field_validator
@@ -43,3 +44,35 @@ class ModelResponse(BaseModel):
     model: str
     provider: str
     error: str | None = None
+
+
+class NivelDeCriticidad(str, Enum):
+    """Levels accepted by the technical extraction pipeline."""
+
+    BAJA = "baja"
+    MEDIA = "media"
+    ALTA = "alta"
+
+
+class TechnicalExtraction(BaseModel):
+    """Validated output produced from a technical paragraph."""
+
+    tecnologias: list[str] = Field(min_length=1)
+    nivel_de_criticidad: NivelDeCriticidad
+    resumen_tecnico: str = Field(min_length=1)
+
+    @field_validator("tecnologias")
+    @classmethod
+    def technologies_must_not_be_blank(cls, values: list[str]) -> list[str]:
+        cleaned_values = [value.strip() for value in values]
+        if any(not value for value in cleaned_values):
+            raise ValueError("tecnologias no puede contener valores vacíos")
+        return cleaned_values
+
+    @field_validator("resumen_tecnico")
+    @classmethod
+    def summary_must_not_be_blank(cls, value: str) -> str:
+        value = value.strip()
+        if not value:
+            raise ValueError("resumen_tecnico no puede estar vacío")
+        return value

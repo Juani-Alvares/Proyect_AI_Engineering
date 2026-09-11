@@ -1,7 +1,7 @@
 import pytest
 from pydantic import ValidationError
 
-from src.schemas import ChatMessage, ModelConfig
+from src.schemas import ChatMessage, ModelConfig, TechnicalExtraction
 
 
 def test_valid_message() -> None:
@@ -31,3 +31,41 @@ def test_invalid_max_tokens(max_tokens: int) -> None:
 def test_invalid_model(model: str) -> None:
     with pytest.raises(ValidationError):
         ModelConfig(model=model)
+
+
+def test_valid_technical_extraction() -> None:
+    result = TechnicalExtraction(
+        tecnologias=["FastAPI", "Redis", "PostgreSQL"],
+        nivel_de_criticidad="alta",
+        resumen_tecnico="Se detectó latencia y problemas de concurrencia.",
+    )
+    assert result.nivel_de_criticidad.value == "alta"
+
+
+@pytest.mark.parametrize(
+    "data",
+    [
+        {
+            "tecnologias": [],
+            "nivel_de_criticidad": "baja",
+            "resumen_tecnico": "Resumen válido",
+        },
+        {
+            "tecnologias": ["FastAPI"],
+            "nivel_de_criticidad": "urgente",
+            "resumen_tecnico": "Resumen válido",
+        },
+        {
+            "tecnologias": ["FastAPI"],
+            "nivel_de_criticidad": "media",
+            "resumen_tecnico": "   ",
+        },
+        {
+            "tecnologias": ["FastAPI"],
+            "nivel_de_criticidad": "media",
+        },
+    ],
+)
+def test_invalid_technical_extraction(data: dict[str, object]) -> None:
+    with pytest.raises(ValidationError):
+        TechnicalExtraction.model_validate(data)

@@ -2,6 +2,12 @@
 
 Cliente educativo en Python 3.12 para trabajar con **OpenAI y Anthropic mediante una interfaz común y asíncrona**.
 
+## Entrega 2: Pipeline de extracción técnica
+
+La segunda entrega agrega un pipeline LCEL que recibe un párrafo técnico y devuelve un objeto Pydantic con tecnologías, nivel de criticidad (`baja`, `media` o `alta`) y un resumen técnico. La cadena usa `ChatPromptTemplate | model.with_structured_output(TechnicalExtraction)` y aplica hasta dos intentos automáticos mediante `.with_retry()` ante errores de JSON, parseo o validación estructurada.
+
+La salida de `with_structured_output()` es directamente el objeto Pydantic; por eso el pipeline valida campos faltantes o inválidos, pero no consulta `finish_reason` de forma directa. Ese metadato depende de la respuesta cruda que exponga cada proveedor y LangChain lo abstrae en este flujo simple.
+
 ## Qué demuestra
 
 - Pydantic para validar mensajes y configuración.
@@ -51,20 +57,31 @@ LLM_TEMPERATURE=0.7
 LLM_MAX_TOKENS=300
 ```
 
-`.env` está incluido en `.gitignore`. **Nunca subas las claves a GitHub.**
+`.env` está incluido en `.gitignore`. 
 
-## Ejecutar
+## Ejecutar el ejemplo de Entrega 2
 
 ```powershell
 python main.py
 ```
 
-El programa realiza dos pruebas con el mismo mensaje:
+El programa procesa este texto:
 
-1. `generate()` devuelve la respuesta completa.
-2. `stream()` imprime los fragmentos a medida que llegan.
+```text
+La API está desarrollada con FastAPI, utiliza Redis como caché y PostgreSQL como base de datos. Se detectaron problemas de conexiones concurrentes y aumento de latencia.
+```
 
-Si no hay saldo/cuota o la API devuelve un error, se muestra un mensaje controlado. Los tests no hacen llamadas reales.
+Salida esperada (el contenido exacto depende del modelo):
+
+```json
+{
+  "tecnologias": ["FastAPI", "Redis", "PostgreSQL"],
+  "nivel_de_criticidad": "alta",
+  "resumen_tecnico": "Se detectaron problemas de concurrencia y latencia."
+}
+```
+
+El proveedor se elige mediante `LLM_PROVIDER` en `.env`. Se conservan los clientes asíncronos y el streaming de la Entrega 1. Si falta una clave o la API falla, `main.py` muestra un error controlado.
 
 ## Tests sin gastar dinero
 
@@ -72,7 +89,7 @@ Si no hay saldo/cuota o la API devuelve un error, se muestra un mensaje controla
 python -m pytest
 ```
 
-Los tests comprueban validaciones, selección de proveedor y comportamiento ante claves ausentes. No necesitan API keys ni saldo.
+Los tests comprueban validaciones, selección de proveedor, comportamiento ante claves ausentes, el pipeline asíncrono con un mock y un reintento LCEL. No necesitan API keys ni saldo.
 
 ## Estructura
 
@@ -89,10 +106,14 @@ unified-async-llm-client/
 │   ├── base_client.py
 │   ├── openai_client.py
 │   ├── anthropic_client.py
-│   └── manager.py
+│   ├── manager.py
+│   └── pipeline/
+│       ├── prompt.py      # ChatPromptTemplate modular
+│       └── chain.py       # Cadena LCEL y process_text()
 └── tests/
     ├── __init__.py
     ├── test_schema.py
     ├── test_clients.py
-    └── test_manager.py
+    ├── test_manager.py
+    └── test_pipeline.py
 ```
