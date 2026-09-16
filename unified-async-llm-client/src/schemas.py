@@ -76,3 +76,26 @@ class TechnicalExtraction(BaseModel):
         if not value:
             raise ValueError("resumen_tecnico no puede estar vacío")
         return value
+
+
+class RAGResponse(BaseModel):
+    """Grounded answer returned by the local RAG pipeline."""
+
+    respuesta: str = Field(min_length=1)
+    referencias: list[str] = Field(default_factory=list)
+
+    @field_validator("respuesta")
+    @classmethod
+    def answer_must_not_be_blank(cls, value: str) -> str:
+        value = value.strip()
+        if not value:
+            raise ValueError("respuesta no puede estar vacía")
+        return value
+
+    @field_validator("referencias")
+    @classmethod
+    def references_must_be_source_files(cls, values: list[str]) -> list[str]:
+        cleaned_values = [value.strip() for value in values]
+        if any(not value or not value.endswith((".txt", ".md")) for value in cleaned_values):
+            raise ValueError("referencias debe contener nombres de archivos .txt o .md")
+        return cleaned_values

@@ -17,6 +17,8 @@ from .prompt import technical_extraction_prompt
 
 logger = logging.getLogger(__name__)
 
+load_dotenv()
+
 
 class RetryLogHandler(BaseCallbackHandler):
     """Reports errors that LangChain may retry."""
@@ -70,7 +72,6 @@ async def process_text(text: str) -> TechnicalExtraction:
     if not text.strip():
         raise ValueError("El texto de entrada no puede estar vacío.")
 
-    load_dotenv()
     logger.info("Inicio del procesamiento de texto técnico.")
     chain = build_chain()
 

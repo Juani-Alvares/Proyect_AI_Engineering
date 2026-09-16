@@ -1,27 +1,14 @@
 # Unified Async LLM Client
 
-Cliente educativo en Python 3.12 para trabajar con **OpenAI y Anthropic mediante una interfaz común y asíncrona**.
+Proyecto educativo en Python 3.12 con tres entregas: clientes asíncronos para OpenAI y Anthropic, extracción técnica estructurada y un sistema RAG local.
 
-## Entrega 2: Pipeline de extracción técnica
+## Entrega 3: RAG local
 
-La segunda entrega agrega un pipeline LCEL que recibe un párrafo técnico y devuelve un objeto Pydantic con tecnologías, nivel de criticidad (`baja`, `media` o `alta`) y un resumen técnico. La cadena usa `ChatPromptTemplate | model.with_structured_output(TechnicalExtraction)` y aplica hasta dos intentos automáticos mediante `.with_retry()` ante errores de JSON, parseo o validación estructurada.
+El sistema lee documentos de `data/`, los fragmenta, los guarda en ChromaDB local y responde preguntas usando solamente los fragmentos recuperados. La respuesta final es un objeto Pydantic con texto y referencias de archivos.
 
-La salida de `with_structured_output()` es directamente el objeto Pydantic; por eso el pipeline valida campos faltantes o inválidos, pero no consulta `finish_reason` de forma directa. Ese metadato depende de la respuesta cruda que exponga cada proveedor y LangChain lo abstrae en este flujo simple.
-
-## Qué demuestra
-
-- Pydantic para validar mensajes y configuración.
-- `async`/`await` para llamadas no bloqueantes.
-- Streaming con generadores asíncronos (`async for` + `yield`).
-- Una interfaz abstracta común para distintos proveedores.
-- `AsyncLLMManager` para seleccionar OpenAI o Anthropic.
-- Variables de entorno para no guardar claves en el código.
-- Manejo de errores de autenticación, cuota/límite y conexión.
-- Tests locales que no consumen API ni requieren saldo.
+Se usa `OpenAIEmbeddings` con `text-embedding-3-small` tanto al indexar como al consultar, para mantener los vectores compatibles. El LLM puede seguir siendo OpenAI o Anthropic mediante `LLM_PROVIDER`; OpenAI sigue siendo necesario para los embeddings.
 
 ## Instalación en Windows
-
-Desde la carpeta del proyecto:
 
 ```powershell
 py -3.12 -m venv .venv
@@ -35,85 +22,89 @@ pip install -r requirements.txt
 copy .env.example .env
 ```
 
-Edita `.env` con **solo la clave del proveedor que vayas a usar**.
-
-OpenAI:
+Completa las claves necesarias y no subas `.env` a GitHub. Las variables son:
 
 ```env
-LLM_PROVIDER=openai
 OPENAI_API_KEY=tu_clave
+ANTHROPIC_API_KEY=tu_clave_opcional
+LLM_PROVIDER=openai
 LLM_MODEL=gpt-4o-mini
-LLM_TEMPERATURE=0.7
+LLM_TEMPERATURE=0.2
 LLM_MAX_TOKENS=300
+EMBEDDING_MODEL=text-embedding-3-small
 ```
 
-Anthropic:
+La carga de `.env` está centralizada al inicio de `main.py`. Los módulos y funciones no vuelven a cargar el entorno.
 
-```env
-LLM_PROVIDER=anthropic
-ANTHROPIC_API_KEY=tu_clave
-LLM_MODEL=claude-sonnet-5
-LLM_TEMPERATURE=0.7
-LLM_MAX_TOKENS=300
-```
-
-`.env` está incluido en `.gitignore`. 
-
-## Ejecutar el ejemplo de Entrega 2
+## Ejecutar el RAG
 
 ```powershell
 python main.py
 ```
 
-El programa procesa este texto:
+En la primera ejecución se leen los archivos `.txt` y `.md` de `data/`, se crean chunks y se persisten en `vectorstore/`. Las siguientes ejecuciones detectan `vectorstore/chroma.sqlite3` y reutilizan la colección sin reindexar los documentos.
+
+`RecursiveCharacterTextSplitter.from_tiktoken_encoder()` realiza el chunking por tokens, con chunks de 500 tokens y un overlap de 50 tokens.
+
+La búsqueda usa similitud con `k=3`, por lo que solo se entregan tres fragmentos al prompt.
+
+Pregunta conocida:
 
 ```text
-La API está desarrollada con FastAPI, utiliza Redis como caché y PostgreSQL como base de datos. Se detectaron problemas de conexiones concurrentes y aumento de latencia.
+¿Cuál es el máximo de conexiones del pool de PostgreSQL?
 ```
 
-Salida esperada (el contenido exacto depende del modelo):
+Respuesta esperada:
 
 ```json
 {
-  "tecnologias": ["FastAPI", "Redis", "PostgreSQL"],
-  "nivel_de_criticidad": "alta",
-  "resumen_tecnico": "Se detectaron problemas de concurrencia y latencia."
+  "respuesta": "El máximo es 20 conexiones.",
+  "referencias": ["database_connections.txt"]
 }
 ```
 
-El proveedor se elige mediante `LLM_PROVIDER` en `.env`. Se conservan los clientes asíncronos y el streaming de la Entrega 1. Si falta una clave o la API falla, `main.py` muestra un error controlado.
+Pregunta trampa:
 
-## Tests sin gastar dinero
+```text
+¿Qué proveedor de pagos utiliza la API?
+```
+
+Como esa información no figura en los documentos, el prompt obliga a responder:
+
+```json
+{
+  "respuesta": "No lo sé.",
+  "referencias": []
+}
+```
+
+La cadena LCEL aplica el prompt grounded, el LLM y `PydanticOutputParser`. Así se valida que `respuesta` no esté vacía y que las referencias sean nombres de archivos `.txt` o `.md`.
+
+## Tests
 
 ```powershell
 python -m pytest
 ```
 
-Los tests comprueban validaciones, selección de proveedor, comportamiento ante claves ausentes, el pipeline asíncrono con un mock y un reintento LCEL. No necesitan API keys ni saldo.
+Los tests RAG usan embeddings, vector store y LLM falsos; no realizan llamadas a OpenAI ni Anthropic.
 
-## Estructura
+## Estructura principal
 
 ```text
 unified-async-llm-client/
-├── .env.example
-├── .gitignore
-├── README.md
-├── requirements.txt
-├── main.py
+├── data/                  # Dataset técnico de ejemplo
+├── vectorstore/           # Se crea localmente y está ignorado por Git
 ├── src/
-│   ├── __init__.py
-│   ├── schemas.py
-│   ├── base_client.py
-│   ├── openai_client.py
-│   ├── anthropic_client.py
-│   ├── manager.py
-│   └── pipeline/
-│       ├── prompt.py      # ChatPromptTemplate modular
-│       └── chain.py       # Cadena LCEL y process_text()
-└── tests/
-    ├── __init__.py
-    ├── test_schema.py
-    ├── test_clients.py
-    ├── test_manager.py
-    └── test_pipeline.py
+│   ├── pipeline/          # Entrega 2
+│   └── rag/
+│       ├── ingestion.py   # Lectura, chunks y Chroma persistente
+│       ├── retriever.py   # Similarity search con k=3
+│       ├── prompt.py      # Prompt grounded y PydanticOutputParser
+│       └── chain.py       # get_rag_response() asíncrona
+├── tests/
+│   └── test_rag.py
+├── main.py
+└── requirements.txt
 ```
+
+Los clientes y tests de las entregas 1 y 2 se conservan en `src/` y `tests/`.

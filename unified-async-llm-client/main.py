@@ -1,28 +1,29 @@
-"""Asynchronous example for the technical entity extraction pipeline."""
+"""Asynchronous example for the local RAG system."""
 
 import asyncio
 import logging
 
 from dotenv import load_dotenv
 
-from src.pipeline.chain import process_text
+load_dotenv()
+
+from src.rag.chain import get_rag_response
 
 
 async def main() -> None:
-    load_dotenv()
     logging.basicConfig(level=logging.INFO, format="%(levelname)s: %(message)s")
-    text = (
-        "La API está desarrollada con FastAPI, utiliza Redis como caché y "
-        "PostgreSQL como base de datos. Se detectaron problemas de conexiones "
-        "concurrentes y aumento de latencia."
-    )
+    questions = [
+        "¿Cuál es el máximo de conexiones del pool de PostgreSQL?",
+        "¿Qué proveedor de pagos utiliza la API?",
+    ]
 
-    try:
-        result = await process_text(text)
-        print("Resultado validado:")
-        print(result.model_dump_json(indent=2))
-    except Exception as error:
-        print(f"No fue posible procesar el texto: {error}")
+    for question in questions:
+        try:
+            result = await get_rag_response(question)
+            print(f"\nPregunta: {question}")
+            print(result.model_dump_json(indent=2))
+        except Exception as error:
+            print(f"No fue posible procesar la pregunta: {error}")
 
 
 if __name__ == "__main__":

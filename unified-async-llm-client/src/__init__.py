@@ -6,6 +6,7 @@ from .schemas import (
     ModelConfig,
     ModelResponse,
     NivelDeCriticidad,
+    RAGResponse,
     TechnicalExtraction,
 )
 
@@ -15,5 +16,6 @@ __all__ = [
     "ModelConfig",
     "ModelResponse",
     "NivelDeCriticidad",
+    "RAGResponse",
     "TechnicalExtraction",
 ]
