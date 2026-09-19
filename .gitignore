@@ -1,4 +1,12 @@
+.env
 .venv/
-**/.env
+venv/
+__pycache__/
 **/__pycache__/
+*.pyc
+.pytest_cache/
 **/.pytest_cache/
+vectorstore/
+tmp/
+**/tmp/
+.vscode/

@@ -1,3 +1,0 @@
-La API usa SQLAlchemy en modo asíncrono para conectarse a PostgreSQL. El pool de
-conexiones tiene un máximo de 20 conexiones. Cada operación de base de datos debe
-cerrar su sesión para devolver la conexión al pool.

@@ -17,7 +17,7 @@ Los archivos de `data/` se fragmentan con `RecursiveCharacterTextSplitter.from_t
 ## Estructura del repositorio
 
 ```text
-unified-async-llm-client/
+Proyect-AI_Engineering/
 ├── data/
 │   ├── api_stack.md
 │   ├── database_connections.txt
@@ -55,6 +55,7 @@ unified-async-llm-client/
 ```
 
 `vectorstore/` se crea después de la primera ejecución y no se versiona.
+Los documentos de `data/` tienen entre 700 y 1000 palabras aproximadamente, por lo que permiten observar chunking real de 500 tokens con 50 tokens de overlap.
 
 ## Requisitos
 
