@@ -5,8 +5,10 @@ import logging
 from langchain_chroma import Chroma
 from langchain_core.documents import Document
 
+from ..config import RAG_TOP_K
+
 logger = logging.getLogger(__name__)
-TOP_K = 3
+TOP_K = RAG_TOP_K
 
 
 def retrieve_documents(vectorstore: Chroma, query: str, k: int = TOP_K) -> list[Document]:

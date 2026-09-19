@@ -2,9 +2,7 @@
 
 import json
 import logging
-import os
 
-from dotenv import load_dotenv
 from langchain_anthropic import ChatAnthropic
 from langchain_core.callbacks import BaseCallbackHandler
 from langchain_core.exceptions import OutputParserException
@@ -12,12 +10,11 @@ from langchain_core.runnables import Runnable
 from langchain_openai import ChatOpenAI
 from pydantic import ValidationError
 
+from ..config import LLM_MAX_TOKENS, LLM_MODEL, LLM_PROVIDER, LLM_TEMPERATURE
 from ..schemas import TechnicalExtraction
 from .prompt import technical_extraction_prompt
 
 logger = logging.getLogger(__name__)
-
-load_dotenv()
 
 
 class RetryLogHandler(BaseCallbackHandler):
@@ -31,21 +28,17 @@ class RetryLogHandler(BaseCallbackHandler):
 
 
 def _create_model() -> ChatOpenAI | ChatAnthropic:
-    provider = os.getenv("LLM_PROVIDER", "openai").lower()
-    model_name = os.getenv("LLM_MODEL")
-    temperature = float(os.getenv("LLM_TEMPERATURE", "0.2"))
-
-    if provider == "anthropic":
+    if LLM_PROVIDER == "anthropic":
         return ChatAnthropic(
-            model=model_name or "claude-sonnet-5",
-            temperature=temperature,
-            max_tokens=int(os.getenv("LLM_MAX_TOKENS", "300")),
+            model=LLM_MODEL or "claude-sonnet-5",
+            temperature=LLM_TEMPERATURE,
+            max_tokens=LLM_MAX_TOKENS,
         )
-    if provider == "openai":
+    if LLM_PROVIDER == "openai":
         return ChatOpenAI(
-            model=model_name or "gpt-4o-mini",
-            temperature=temperature,
-            max_tokens=int(os.getenv("LLM_MAX_TOKENS", "300")),
+            model=LLM_MODEL or "gpt-4o-mini",
+            temperature=LLM_TEMPERATURE,
+            max_tokens=LLM_MAX_TOKENS,
         )
     raise ValueError("LLM_PROVIDER debe ser 'openai' o 'anthropic'.")
 

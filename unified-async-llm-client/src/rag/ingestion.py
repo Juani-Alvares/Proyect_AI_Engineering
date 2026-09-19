@@ -8,11 +8,12 @@ from langchain_core.documents import Document
 from langchain_core.embeddings import Embeddings
 from langchain_text_splitters import RecursiveCharacterTextSplitter
 
+from ..config import CHROMA_PERSIST_DIR, PROJECT_ROOT
+
 logger = logging.getLogger(__name__)
 
-PROJECT_ROOT = Path(__file__).resolve().parents[2]
 DATA_DIR = PROJECT_ROOT / "data"
-VECTORSTORE_DIR = PROJECT_ROOT / "vectorstore"
+VECTORSTORE_DIR = CHROMA_PERSIST_DIR
 COLLECTION_NAME = "technical_documents"
 
 # The splitter uses tiktoken so chunk size and overlap are measured in tokens.

@@ -2,12 +2,18 @@
 
 import asyncio
 import logging
-import os
 
-from langchain_core.runnables import Runnable
 from langchain_anthropic import ChatAnthropic
+from langchain_core.runnables import Runnable
 from langchain_openai import ChatOpenAI, OpenAIEmbeddings
 
+from ..config import (
+    EMBEDDING_MODEL,
+    LLM_MAX_TOKENS,
+    LLM_MODEL,
+    LLM_PROVIDER,
+    LLM_TEMPERATURE,
+)
 from ..schemas import RAGResponse
 from .ingestion import create_or_load_vectorstore
 from .prompt import rag_output_parser, rag_prompt
@@ -18,29 +24,23 @@ logger = logging.getLogger(__name__)
 
 def create_embeddings() -> OpenAIEmbeddings:
     """Create the single embedding model used for indexing and searching."""
-    return OpenAIEmbeddings(
-        model=os.getenv("EMBEDDING_MODEL", "text-embedding-3-small")
-    )
+    return OpenAIEmbeddings(model=EMBEDDING_MODEL)
 
 
 def _create_rag_model() -> ChatOpenAI | ChatAnthropic:
     """Reuse the existing OpenAI configuration for grounded answers."""
-    provider = os.getenv("LLM_PROVIDER", "openai").lower()
-    model_name = os.getenv("LLM_MODEL")
-    temperature = float(os.getenv("LLM_TEMPERATURE", "0.2"))
-
-    if provider == "anthropic":
+    if LLM_PROVIDER == "anthropic":
         return ChatAnthropic(
-            model=model_name or "claude-sonnet-5",
-            temperature=temperature,
-            max_tokens=int(os.getenv("LLM_MAX_TOKENS", "300")),
+            model=LLM_MODEL or "claude-sonnet-5",
+            temperature=LLM_TEMPERATURE,
+            max_tokens=LLM_MAX_TOKENS,
         )
-    if provider != "openai":
+    if LLM_PROVIDER != "openai":
         raise ValueError("LLM_PROVIDER debe ser 'openai' o 'anthropic'.")
     return ChatOpenAI(
-        model=model_name or "gpt-4o-mini",
-        temperature=temperature,
-        max_tokens=int(os.getenv("LLM_MAX_TOKENS", "300")),
+        model=LLM_MODEL or "gpt-4o-mini",
+        temperature=LLM_TEMPERATURE,
+        max_tokens=LLM_MAX_TOKENS,
     )
 
 

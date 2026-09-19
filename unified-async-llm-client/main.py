@@ -3,10 +3,6 @@
 import asyncio
 import logging
 
-from dotenv import load_dotenv
-
-load_dotenv()
-
 from src.rag.chain import get_rag_response
 
 

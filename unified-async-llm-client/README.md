@@ -1,14 +1,68 @@
-# Unified Async LLM Client
+# Unified Async LLM Client / RAG
 
-Proyecto educativo en Python 3.12 con tres entregas: clientes asíncronos para OpenAI y Anthropic, extracción técnica estructurada y un sistema RAG local.
+## Qué hace el proyecto
 
-## Entrega 3: RAG local
+Proyecto educativo en Python 3.12 dividido en tres entregas. La Entrega 1 implementa clientes asíncronos para OpenAI y Anthropic con streaming. La Entrega 2 agrega extracción de entidades técnicas con LangChain y Pydantic. La Entrega 3 implementa un sistema RAG local sobre documentos técnicos.
 
-El sistema lee documentos de `data/`, los fragmenta, los guarda en ChromaDB local y responde preguntas usando solamente los fragmentos recuperados. La respuesta final es un objeto Pydantic con texto y referencias de archivos.
+## Entrega 3 — Sistema RAG
 
-Se usa `OpenAIEmbeddings` con `text-embedding-3-small` tanto al indexar como al consultar, para mantener los vectores compatibles. El LLM puede seguir siendo OpenAI o Anthropic mediante `LLM_PROVIDER`; OpenAI sigue siendo necesario para los embeddings.
+El flujo responde preguntas usando únicamente los documentos locales:
 
-## Instalación en Windows
+```text
+Documentos → Chunking → Embeddings → ChromaDB → Retriever → Prompt → LLM → PydanticOutputParser
+```
+
+Los archivos de `data/` se fragmentan con `RecursiveCharacterTextSplitter.from_tiktoken_encoder()` en chunks de 500 tokens, con 50 tokens de overlap. Se generan embeddings con `text-embedding-3-small`, se guardan localmente en ChromaDB y se recuperan solo los tres fragmentos más relevantes (`RAG_TOP_K=3`). La respuesta final incluye texto y referencias validadas por Pydantic.
+
+## Estructura del repositorio
+
+```text
+unified-async-llm-client/
+├── data/
+│   ├── api_stack.md
+│   ├── database_connections.txt
+│   └── monitoring.md
+├── src/
+│   ├── __init__.py
+│   ├── config.py
+│   ├── schemas.py
+│   ├── base_client.py
+│   ├── openai_client.py
+│   ├── anthropic_client.py
+│   ├── manager.py
+│   ├── pipeline/
+│   │   ├── __init__.py
+│   │   ├── prompt.py
+│   │   └── chain.py
+│   └── rag/
+│       ├── __init__.py
+│       ├── ingestion.py
+│       ├── retriever.py
+│       ├── prompt.py
+│       └── chain.py
+├── tests/
+│   ├── __init__.py
+│   ├── test_schema.py
+│   ├── test_clients.py
+│   ├── test_manager.py
+│   ├── test_pipeline.py
+│   └── test_rag.py
+├── .env.example
+├── .gitignore
+├── README.md
+├── requirements.txt
+└── main.py
+```
+
+`vectorstore/` se crea después de la primera ejecución y no se versiona.
+
+## Requisitos
+
+- Python 3.12
+- Git opcional
+- Una API key de OpenAI para la ejecución real de RAG y embeddings
+
+## Instalación paso a paso — Windows
 
 ```powershell
 py -3.12 -m venv .venv
@@ -22,54 +76,59 @@ pip install -r requirements.txt
 copy .env.example .env
 ```
 
-Completa las claves necesarias y no subas `.env` a GitHub. Las variables son:
+Luego edita `.env` sin incluir claves en el código. Para la ejecución RAG con OpenAI, completa al menos `OPENAI_API_KEY`.
 
 ```env
-OPENAI_API_KEY=tu_clave
-ANTHROPIC_API_KEY=tu_clave_opcional
+OPENAI_API_KEY=
+ANTHROPIC_API_KEY=
 LLM_PROVIDER=openai
 LLM_MODEL=gpt-4o-mini
-LLM_TEMPERATURE=0.2
+LLM_TEMPERATURE=0.7
 LLM_MAX_TOKENS=300
 EMBEDDING_MODEL=text-embedding-3-small
+CHROMA_PERSIST_DIR=vectorstore
+RAG_TOP_K=3
 ```
 
-La carga de `.env` está centralizada al inicio de `main.py`. Los módulos y funciones no vuelven a cargar el entorno.
+Si se selecciona `LLM_PROVIDER=anthropic`, completa también `ANTHROPIC_API_KEY` y usa un modelo Anthropic en `LLM_MODEL`. OpenAI sigue siendo necesario para `OpenAIEmbeddings`.
 
-## Ejecutar el RAG
+## Ejecutar
 
 ```powershell
 python main.py
 ```
 
-En la primera ejecución se leen los archivos `.txt` y `.md` de `data/`, se crean chunks y se persisten en `vectorstore/`. Las siguientes ejecuciones detectan `vectorstore/chroma.sqlite3` y reutilizan la colección sin reindexar los documentos.
+El script inicializa o reutiliza el vectorstore, formula una pregunta conocida, imprime la respuesta con referencias, y luego ejecuta una pregunta trampa que debe responder `No lo sé.`.
 
-`RecursiveCharacterTextSplitter.from_tiktoken_encoder()` realiza el chunking por tokens, con chunks de 500 tokens y un overlap de 50 tokens.
+## Primera ejecución
 
-La búsqueda usa similitud con `k=3`, por lo que solo se entregan tres fragmentos al prompt.
+La primera ejecución:
 
-Pregunta conocida:
+- lee los archivos `.txt` y `.md` de `data/`;
+- fragmenta los documentos en tokens;
+- genera embeddings;
+- crea `vectorstore/`;
+- persiste la colección de ChromaDB.
+
+## Ejecuciones posteriores
+
+Si existe `vectorstore/chroma.sqlite3`, el sistema reutiliza la colección persistida y no vuelve a indexar los documentos.
+
+## Pregunta conocida
 
 ```text
 ¿Cuál es el máximo de conexiones del pool de PostgreSQL?
 ```
 
-Respuesta esperada:
+La evidencia aparece en `data/database_connections.txt`; la respuesta debe indicar que el máximo es 20 y referenciar ese archivo.
 
-```json
-{
-  "respuesta": "El máximo es 20 conexiones.",
-  "referencias": ["database_connections.txt"]
-}
-```
-
-Pregunta trampa:
+## Pregunta trampa
 
 ```text
 ¿Qué proveedor de pagos utiliza la API?
 ```
 
-Como esa información no figura en los documentos, el prompt obliga a responder:
+La información no aparece en el dataset. El prompt grounded exige una salida equivalente a:
 
 ```json
 {
@@ -78,33 +137,45 @@ Como esa información no figura en los documentos, el prompt obliga a responder:
 }
 ```
 
-La cadena LCEL aplica el prompt grounded, el LLM y `PydanticOutputParser`. Así se valida que `respuesta` no esté vacía y que las referencias sean nombres de archivos `.txt` o `.md`.
-
 ## Tests
 
 ```powershell
 python -m pytest
 ```
 
-Los tests RAG usan embeddings, vector store y LLM falsos; no realizan llamadas a OpenAI ni Anthropic.
+Los tests usan mocks y fakes para embeddings, LLM y vectorstore; no consumen crédito ni requieren API keys.
 
-## Estructura principal
+### Troubleshooting de pytest en Windows
 
-```text
-unified-async-llm-client/
-├── data/                  # Dataset técnico de ejemplo
-├── vectorstore/           # Se crea localmente y está ignorado por Git
-├── src/
-│   ├── pipeline/          # Entrega 2
-│   └── rag/
-│       ├── ingestion.py   # Lectura, chunks y Chroma persistente
-│       ├── retriever.py   # Similarity search con k=3
-│       ├── prompt.py      # Prompt grounded y PydanticOutputParser
-│       └── chain.py       # get_rag_response() asíncrona
-├── tests/
-│   └── test_rag.py
-├── main.py
-└── requirements.txt
+Si Windows bloquea una carpeta temporal, ejecuta opcionalmente:
+
+```cmd
+set TMP=%CD%\tmp
+set TEMP=%CD%\tmp
+mkdir tmp
+python -m pytest
 ```
 
-Los clientes y tests de las entregas 1 y 2 se conservan en `src/` y `tests/`.
+## Variables de entorno
+
+`src/config.py` carga `.env` una sola vez y centraliza estas variables:
+
+| Variable | Uso | Default |
+| --- | --- | --- |
+| `OPENAI_API_KEY` | SDK OpenAI y embeddings | vacío |
+| `ANTHROPIC_API_KEY` | SDK Anthropic | vacío |
+| `LLM_PROVIDER` | Proveedor del LLM | `openai` |
+| `LLM_MODEL` | Modelo de chat | `gpt-4o-mini` en `.env.example` |
+| `LLM_TEMPERATURE` | Temperatura del modelo | `0.7` |
+| `LLM_MAX_TOKENS` | Máximo de tokens de respuesta | `300` |
+| `EMBEDDING_MODEL` | Modelo usado al indexar y buscar | `text-embedding-3-small` |
+| `CHROMA_PERSIST_DIR` | Carpeta de ChromaDB | `vectorstore` |
+| `RAG_TOP_K` | Fragmentos recuperados | `3` |
+
+## Seguridad
+
+`.env`, `.venv`, `vectorstore/`, `tmp/`, `__pycache__/`, archivos `.pyc` y `.pytest_cache/` están ignorados por Git. No se incluyen claves reales en el repositorio.
+
+## Notas sobre costos
+
+Los tests no realizan llamadas externas. En cambio, `python main.py` requiere una clave válida y cuota de OpenAI para generar embeddings y usar el LLM configurado; si se usa Anthropic como LLM, también requiere su clave y cuota.
