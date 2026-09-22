@@ -1,0 +1,7 @@
+[
+  {"pregunta":"¿Cuál es el máximo de conexiones?","documento_id_esperado":"database_connections.txt"},
+  {"pregunta":"¿Qué framework usa la API?","documento_id_esperado":"api_stack.md"},
+  {"pregunta":"¿Cuándo se alerta por latencia?","documento_id_esperado":"monitoring.md"},
+  {"pregunta":"¿Qué usa la caché?","documento_id_esperado":"api_stack.md"},
+  {"pregunta":"¿Qué consulta usa el health check?","documento_id_esperado":"database_connections.txt"}
+]
