@@ -2,7 +2,7 @@
 
 ## Qué hace el proyecto
 
-Proyecto educativo en Python 3.12 dividido en cuatro entregas. La Entrega 1 implementa clientes asíncronos para OpenAI y Anthropic con streaming. La Entrega 2 agrega extracción de entidades técnicas con LangChain y Pydantic. La Entrega 3 implementa un sistema RAG local sobre documentos técnicos. La Entrega 4 incorpora recuperación híbrida escalable con Pinecone.
+Proyecto educativo en Python 3.12 que incluye las Entregas 1 a 4 y la Pre-entrega 6. La Entrega 1 implementa clientes asíncronos para OpenAI y Anthropic con streaming. La Entrega 2 agrega extracción de entidades técnicas con LangChain y Pydantic. La Entrega 3 implementa un sistema RAG local sobre documentos técnicos. La Entrega 4 incorpora recuperación híbrida escalable con Pinecone. La Pre-entrega 6 añade un orquestador multi-agente local y reproducible.
 
 ## Entrega 3 — Sistema RAG
 
@@ -244,3 +244,110 @@ python -m pytest
 ## Notas sobre costos
 
 Los tests no realizan llamadas externas. En cambio, `python main.py` requiere una clave válida y cuota de OpenAI para generar embeddings y usar el LLM configurado; si se usa Anthropic como LLM, también requiere su clave y cuota. La ingesta y evaluación de Pinecone necesitan también una clave válida de Pinecone.
+
+## Pre-entrega 6 — Orquestador Multi-Agente Especializado
+
+### Objetivo
+
+El orquestador resuelve consultas que requieren evidencia técnica y un cálculo. Un Supervisor decide dinámicamente si debe intervenir el especialista de investigación, el analista, el nodo de validación o la síntesis final. La implementación por defecto es local y determinista: no necesita API keys ni consume crédito.
+
+### Arquitectura y topología
+
+```mermaid
+flowchart TD
+    START --> Supervisor
+    Supervisor -->|research| Research
+    Supervisor -->|analysis| Analyst
+    Supervisor -->|validation| Validation
+    Supervisor -->|finish| Finalize
+    Research --> Supervisor
+    Analyst --> Supervisor
+    Validation --> Supervisor
+    Finalize --> END
+```
+
+Validation puede solicitar refinamiento: si falta evidencia vuelve a Research; si falta un cálculo vuelve a Analyst. Así el flujo no depende solo del número de pasos.
+
+### Estructura de archivos
+
+```text
+src/multi_agent/
+├── state.py
+├── graph.py
+├── supervisor.py
+├── validation.py
+├── tools.py
+└── agents/
+    ├── research_agent.py
+    └── analyst_agent.py
+demo/
+├── multi_agent_demo.py
+└── multi_agent_demo.ipynb
+tests/
+└── test_multi_agent.py
+```
+
+### Estado compartido
+
+`MultiAgentState` hereda de `MessagesState` y conserva `next_agent`, `task_completed`, `step_count`, `research_result`, `analysis_result`, `validation_result`, `final_answer`, `contributions` y `execution_trace`. Cada nodo agrega su nombre al trace y registra su resultado sin entregar todo el estado a los especialistas.
+
+### Supervisor, agentes y validación
+
+- **Supervisor:** `route_supervisor()` devuelve un `Literal` con `research`, `analysis`, `validation` o `finish`. Considera evidencia, análisis, resultado de validation y el límite de pasos.
+- **Research Agent:** usa exclusivamente `search_technical_docs`, una tool que busca evidencia real en `data/` y devuelve la fuente.
+- **Analyst Agent:** usa exclusivamente `calculate_percentage`; recibe la evidencia recuperada y la tarea analítica concreta, no el corpus completo.
+- **Validation:** revisa evidencia, análisis, porcentaje solicitado y datos insuficientes. Devuelve `approved`, `needs_research`, `needs_analysis` y `reason`.
+- **Finalize:** sintetiza evidencia y análisis en `final_answer`, marca `task_completed=True` y termina el grafo.
+
+Los módulos de especialistas incluyen factories con `create_react_agent` y prompts específicos para una ejecución con LLM opcional. La demo usa sus tools locales directamente como fallback determinista verificable.
+
+### Anti-loop y conflictos
+
+`MAX_STEPS = 12`. Cada nodo relevante incrementa `step_count` sin superar ese límite. El margen permite un ciclo completo de `Validation → refinamiento → Validation` antes de la finalización segura. Si se alcanza el límite, el Supervisor deriva a Finalize y evita loops infinitos.
+
+### Ejecución
+
+Desde la raíz del repositorio en Windows:
+
+```powershell
+py -3.12 -m venv .venv
+.venv\Scripts\activate
+pip install -r requirements.txt
+python demo/multi_agent_demo.py
+```
+
+La consulta demostrada busca el máximo de conexiones de PostgreSQL y calcula qué porcentaje representan 15 conexiones activas. La salida muestra Research, Analyst, Validation, `final_answer` y `task_completed = True`.
+
+### Tests
+
+```powershell
+python -m pytest
+```
+
+Las pruebas usan únicamente datos locales y fakes; no llaman a OpenAI, Anthropic ni Pinecone.
+
+### Evidencia esperada
+
+```text
+supervisor → research → supervisor → analysis → supervisor → validation → supervisor → finalize
+```
+
+El notebook `demo/multi_agent_demo.ipynb` repite la misma demostración corta: importa el grafo, ejecuta la consulta y muestra trace, investigación, análisis, validation y respuesta final. No contiene claves, rutas absolutas ni outputs preejecutados.
+
+## Checklist Pre-entrega 6
+
+| Requisito | Archivo / evidencia |
+| --- | --- |
+| State compartido | `src/multi_agent/state.py` |
+| Research Agent | `src/multi_agent/agents/research_agent.py` |
+| Analysis Agent | `src/multi_agent/agents/analyst_agent.py` |
+| Supervisor y `Literal` | `src/multi_agent/supervisor.py` |
+| Validation | `src/multi_agent/validation.py` |
+| StateGraph | `src/multi_agent/graph.py` |
+| Conditional edges y refinamiento | `src/multi_agent/graph.py` |
+| Tool Research | `src/multi_agent/tools.py` — `search_technical_docs` |
+| Tool Analysis | `src/multi_agent/tools.py` — `calculate_percentage` |
+| Mermaid | Esta sección del README |
+| Demo | `demo/multi_agent_demo.py` |
+| Notebook | `demo/multi_agent_demo.ipynb` |
+| Tests | `tests/test_multi_agent.py` |
