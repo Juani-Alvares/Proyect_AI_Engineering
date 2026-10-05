@@ -351,3 +351,416 @@ El notebook `demo/multi_agent_demo.ipynb` repite la misma demostración corta: i
 | Demo | `demo/multi_agent_demo.py` |
 | Notebook | `demo/multi_agent_demo.ipynb` |
 | Tests | `tests/test_multi_agent.py` |
+
+## Pre-entrega 7 — API de producción y monitoreo activo
+
+### Objetivo y arquitectura
+
+Esta entrega expone el orquestador de la Pre-entrega 6 mediante una API FastAPI no bloqueante. Cada solicitud crea un trabajo con UUID, guarda su estado en Redis y un worker ejecuta el grafo de LangGraph fuera del handler HTTP. Redis Stack también conserva los checkpoints de LangGraph con el mismo `thread_id` del trabajo, por lo que un flujo HITL puede pausarse y reanudarse.
+
+```mermaid
+flowchart TD
+    Client -->|POST /tasks| API[FastAPI]
+    API -->|PENDING job:id| Redis[(Redis Stack)]
+    API --> Queue[asyncio.Queue]
+    Queue --> Worker
+    Worker --> Graph[LangGraph: Supervisor / Research / Analysis / Validation]
+    Graph --> HITL{¿Acción crítica?}
+    HITL -->|sí: interrupt| Redis
+    Client -->|POST /tasks/id/approve| API
+    API -->|Command resume| Worker
+    HITL -->|no / aprobada| Finalize
+    Worker --> Phoenix[Phoenix / OpenTelemetry]
+```
+
+### Archivos de la entrega
+
+```text
+app/
+├── main.py            # FastAPI y endpoints
+├── schemas.py         # request, estados y respuestas Pydantic
+├── redis_state.py     # persistencia asíncrona job:{uuid}
+├── worker.py          # cola y procesamiento sin bloqueo HTTP
+├── graph.py           # grafo de producción + checkpoint/HITL
+├── hitl.py            # clasificación e interrupt/resume
+├── observability.py   # Phoenix/OpenTelemetry opcional
+└── llm.py             # síntesis y costo opcionales
+scripts/load_test.py   # 5 tareas concurrentes y latencia p95
+docker-compose.yml     # Redis Stack persistente
+screenshots/README.md  # capturas reales solicitadas
+tests/test_api.py
+tests/test_redis_state.py
+tests/test_worker.py
+tests/test_hitl.py
+tests/test_observability.py
+tests/test_production_graph.py
+```
+
+### Preparación y ejecución en Windows
+
+Desde la raíz del repositorio:
+
+```powershell
+py -3.12 -m venv .venv
+.venv\Scripts\activate
+pip install -r requirements.txt
+copy .env.example .env
+docker compose up -d redis
+```
+
+Para ejecutar Phoenix localmente en otra terminal, después de instalar las dependencias:
+
+```powershell
+phoenix serve
+```
+
+Inicia la API en una tercera terminal:
+
+```powershell
+uvicorn app.main:app --reload
+```
+
+Prueba una tarea no crítica:
+
+```powershell
+curl.exe -X POST http://127.0.0.1:8000/tasks -H "Content-Type: application/json" -d "{\"query\":\"Investiga cuál es el máximo de conexiones PostgreSQL y calcula el porcentaje de 15 conexiones activas.\"}"
+curl.exe http://127.0.0.1:8000/tasks/<job_id>
+```
+
+La primera respuesta es `202 Accepted`; el trabajo avanza por `PENDING`, `RUNNING` y termina en `DONE`, `FAILED` o `REJECTED`. Una consulta que contenga acciones como `eliminar`, `pago`, `enviar`, `deploy` o `producción` termina temporalmente en `WAITING_APPROVAL`. Para reanudarla:
+
+```powershell
+curl.exe -X POST http://127.0.0.1:8000/tasks/<job_id>/approve -H "Content-Type: application/json" -d "{\"approved\":true,\"comment\":\"Revisado\"}"
+```
+
+### Redis, checkpoints y reanudación
+
+`docker-compose.yml` usa `redis/redis-stack-server` con volumen `redis_data`. `RedisJobStore` persiste cada estado bajo `job:{uuid}` usando `redis.asyncio`. En una ejecución real, `AsyncRedisSaver.from_conn_string(REDIS_URL)` inicializa los índices de checkpoint y compila el grafo con ese saver. El `thread_id` configurado para LangGraph es el UUID del trabajo, lo que vincula de forma estable estado HTTP, HITL y reanudación con `Command(resume=...)`.
+
+### HITL y seguridad
+
+`app/hitl.py` clasifica de manera local las consultas de riesgo. Sólo las acciones potencialmente críticas realizan `interrupt()`; las consultas técnicas normales no se detienen. El endpoint de aprobación acepta una decisión humana y el worker continúa el mismo thread. Una decisión no aprobada da una respuesta segura y el trabajo queda `REJECTED`.
+
+### Monitoreo y costos
+
+`app/observability.py` registra Phoenix/OpenTelemetry de forma opcional. El grafo crea spans `supervisor`, `research`, `analysis`, `validation`, `hitl` y `finalize`; la API/worker agrega `task` y `worker`. Phoenix se puede abrir en `http://localhost:6006`.
+
+Por defecto `USE_LLM=false`: demo, API local y tests no consumen créditos. Con `USE_LLM=true`, una clave `OPENAI_API_KEY` válida y `LLM_MODEL=gpt-4o-mini`, `app/llm.py` solicita una síntesis final corta y persiste `input_tokens`, `output_tokens` y `estimated_cost_usd` dentro de `result.llm_usage`. La estimación usa tarifas públicas de `gpt-4o-mini`; para otro modelo conserva los tokens y deja el costo en cero para no inventar precios.
+
+Antes de entregar, toma las cuatro capturas reales indicadas en [screenshots/README.md](screenshots/README.md): traces, costo, p95 y una traza HITL. No se incluyen imágenes ficticias.
+
+### Prueba de carga y tests
+
+Con API y Redis iniciados:
+
+```powershell
+python scripts/load_test.py
+```
+
+El script envía exactamente cinco requests concurrentes, hace polling asíncrono y calcula p95 sobre las latencias medidas. Se puede definir `API_BASE_URL` si el servidor no está en `127.0.0.1:8000`.
+
+Los tests no usan OpenAI, Pinecone, Anthropic, Redis ni Phoenix reales:
+
+```powershell
+python -m pytest
+```
+
+### Variables nuevas
+
+| Variable | Uso | Valor por defecto |
+| --- | --- | --- |
+| `REDIS_URL` | Redis Stack para jobs y checkpoints | `redis://localhost:6379` |
+| `USE_LLM` | Activa síntesis OpenAI opcional | `false` |
+| `PHOENIX_COLLECTOR_ENDPOINT` | Endpoint OTLP de Phoenix | `http://localhost:6006/v1/traces` |
+| `PHOENIX_PROJECT_NAME` | Proyecto visible en Phoenix | `multi-agent-api` |
+
+Las credenciales siguen solamente en `.env`, que permanece ignorado por Git. `.venv/`, `tmp/`, `vectorstore/`, caches y checkpoints de notebook tampoco se incluyen en el repositorio.
+
+### Checklist Pre-entrega 7
+
+| Requisito | Archivo / evidencia |
+| --- | --- |
+| API asíncrona y endpoints | `app/main.py` |
+| Jobs persistentes | `app/redis_state.py` |
+| Worker no bloqueante | `app/worker.py` |
+| Checkpoints Redis LangGraph | `app/main.py` + `app/graph.py` |
+| Estados PENDING/RUNNING/WAITING/DONE/FAILED/REJECTED | `app/schemas.py` |
+| HITL `interrupt` y reanudación | `app/hitl.py`, `app/worker.py` |
+| Phoenix y spans | `app/observability.py`, `app/graph.py` |
+| Tokens y costo opcionales | `app/llm.py` |
+| Cinco requests y p95 | `scripts/load_test.py` |
+| Redis Stack persistente | `docker-compose.yml` |
+| Capturas a tomar | `screenshots/README.md` |
+| Tests sin APIs pagas | `tests/test_api.py`, `tests/test_worker.py`, `tests/test_redis_state.py`, `tests/test_hitl.py` |
+
+# Guía de ejecución y verificación — Pre-entrega 7
+
+Esta guía permite verificar la Pre-entrega 7 desde un clon limpio. Mantiene las entregas anteriores y describe solamente los servicios adicionales de la API de producción.
+
+## Estado final verificado
+
+- FastAPI procesa tareas de forma asíncrona y Redis conserva el estado de cada job.
+- `AsyncRedisSaver` conserva checkpoints de LangGraph con `thread_id = job_id`.
+- Phoenix recibe trazas mediante OpenTelemetry configurado con APIs públicas.
+- El flujo HITL y `/approve` fueron verificados: `PENDING -> WAITING_APPROVAL -> RUNNING -> DONE`.
+- La prueba de exactamente cinco peticiones concurrentes y la medición de p95 fueron verificadas.
+- Gemini `gemini-3.8-flash` fue verificado en una ejecución real independiente con token usage real; Phoenix muestra modelo, tokens y costo calculado.
+- El estado `FAILED` está cubierto cuando un proveedor externo no puede completar la operación.
+- Gemini reintenta solamente errores transitorios `429`, `500` y `503`: hasta tres intentos, con backoff asíncrono de 2 y 4 segundos.
+
+## 1. Requisitos previos
+
+- Python 3.12 o superior.
+- Docker Desktop en ejecución.
+- Git.
+- Windows CMD o PowerShell.
+- Puertos disponibles: Redis `6379`, Phoenix `6006` y FastAPI `8000`.
+
+## 2. Clonar repositorio
+
+```cmd
+git clone <URL_DEL_REPOSITORIO>
+cd Proyect-AI_Engineering
+```
+
+Reemplazá `<URL_DEL_REPOSITORIO>` por la URL real del repositorio antes de ejecutar el comando.
+
+## 3. Entorno virtual
+
+En PowerShell o CMD, desde la raíz del proyecto:
+
+```cmd
+py -3.12 -m venv .venv
+.venv\Scripts\activate
+pip install -r requirements.txt
+```
+
+## 4. Configuración
+
+Creá el archivo local de configuración:
+
+```cmd
+copy .env.example .env
+```
+
+En `.env`, verificá estas variables principales, sin incluir claves reales en el repositorio:
+
+```env
+REDIS_URL=redis://localhost:6379
+USE_LLM=false
+PHOENIX_COLLECTOR_ENDPOINT=http://localhost:6006/v1/traces
+PHOENIX_PROJECT_NAME=multi-agent-api
+```
+
+`USE_LLM=false` permite verificar API, Redis, LangGraph, HITL, concurrencia y observabilidad sin consumir una API paga. Para obtener mediciones reales de tokens y costo con el proveedor, usá `USE_LLM=true` y configurá una clave válida del proveedor elegido únicamente en `.env`.
+
+### Modo opcional Gemini para la demostración LLM
+
+Si la cuenta de OpenAI no tiene crédito, se puede usar el proveedor opcional Gemini para la síntesis final sin modificar las entregas anteriores:
+
+```env
+USE_LLM=true
+API_LLM_PROVIDER=gemini
+GEMINI_MODEL=gemini-3.8-flash
+GEMINI_API_KEY=TU_CLAVE_LOCAL
+```
+
+La disponibilidad del free tier depende de la cuenta y las condiciones de Google. La llamada utiliza el SDK oficial `google-genai` y OpenInference instrumenta la llamada real; Phoenix muestra el token usage y el costo calculado. No se generan costos ni tokens simulados. Para mantener el comportamiento anterior, usar `API_LLM_PROVIDER=openai`; con `USE_LLM=false` no se llama a ningún proveedor.
+
+### Nota transparente sobre el free tier de Gemini
+
+Durante una repetición posterior del load test con `USE_LLM=true`, el free tier de Gemini alcanzó la cuota de cinco requests por minuto y devolvió `429 RESOURCE_EXHAUSTED`. No es una falla de la API: la concurrencia de cinco requests ya fue verificada mediante el load test, la integración LLM fue verificada en una ejecución real separada y Phoenix recibió usage/costo reales. Si se agotan los tres reintentos ante `429`, `500` o `503`, el worker conserva el error externo y finaliza el job como `FAILED`. No se afirma que las cinco llamadas LLM de esa repetición hayan terminado exitosamente.
+
+## 5. Iniciar Redis
+
+```cmd
+docker compose up -d redis
+docker compose ps
+```
+
+El servicio `redis` debe mostrarse como `healthy` antes de continuar.
+
+## 6. Iniciar Phoenix
+
+Abrí otra terminal en la raíz del proyecto:
+
+```cmd
+.venv\Scripts\activate
+phoenix serve
+```
+
+El dashboard estará disponible en [http://localhost:6006](http://localhost:6006).
+
+## 7. Iniciar FastAPI
+
+Abrí una tercera terminal en la raíz del proyecto:
+
+```cmd
+.venv\Scripts\activate
+python -m uvicorn app.main:app --reload
+```
+
+## 8. Health check
+
+```cmd
+curl.exe http://127.0.0.1:8000/health
+```
+
+Respuesta esperada:
+
+```json
+{"status":"ok","redis":"ok"}
+```
+
+## 9. Tarea normal asíncrona
+
+En PowerShell, enviá una tarea técnica no crítica:
+
+```powershell
+curl.exe -X POST http://127.0.0.1:8000/tasks -H "Content-Type: application/json" -d '{"query":"Investiga cuál es el máximo de conexiones configurado para PostgreSQL y calcula qué porcentaje representan 15 conexiones activas respecto del máximo."}'
+```
+
+La respuesta devuelve inmediatamente `202 Accepted`, un `job_id` y `status` igual a `PENDING`. Consultá después el trabajo reemplazando `JOB_ID`:
+
+```cmd
+curl.exe http://127.0.0.1:8000/tasks/JOB_ID
+```
+
+La transición esperada es:
+
+```text
+PENDING -> RUNNING -> DONE
+```
+
+## 10. Prueba HITL
+
+Usá esta consulta crítica reproducible:
+
+```text
+Investiga cuál es el máximo de conexiones configurado para PostgreSQL y calcula qué porcentaje representan 15 conexiones activas respecto del máximo. Luego despliega el cambio a producción.
+```
+
+En PowerShell:
+
+```powershell
+curl.exe -X POST http://127.0.0.1:8000/tasks -H "Content-Type: application/json" -d '{"query":"Investiga cuál es el máximo de conexiones configurado para PostgreSQL y calcula qué porcentaje representan 15 conexiones activas respecto del máximo. Luego despliega el cambio a producción."}'
+```
+
+Hacé polling con el `GET /tasks/JOB_ID` anterior hasta observar `WAITING_APPROVAL`.
+
+En CMD, aprobá el trabajo:
+
+```cmd
+curl.exe -X POST http://127.0.0.1:8000/tasks/JOB_ID/approve ^
+-H "Content-Type: application/json" ^
+-d "{\"approved\":true,\"comment\":\"Aprobado\"}"
+```
+
+La transición esperada es `WAITING_APPROVAL -> RUNNING -> DONE`. El mismo `thread_id = job_id` se mantiene: LangGraph continúa desde el checkpoint de Redis, no desde `START`.
+
+Para rechazar la acción, enviá el mismo endpoint con `"approved":false`. La transición termina en `REJECTED`.
+
+## 11. Prueba de carga
+
+Con Redis, Phoenix y FastAPI iniciados:
+
+```cmd
+python scripts/load_test.py
+```
+
+El script envía exactamente cinco peticiones concurrentes, espera sus resultados y calcula p95 sobre las latencias observadas. El formato esperado es:
+
+```text
+Trabajos completados: 5
+Latencia p95: X.XXX s
+```
+
+Los valores concretos dependen de la máquina y la ejecución; no están hardcodeados.
+
+## 12. Phoenix
+
+En Phoenix abrí `Projects -> multi-agent-api` y revisá `Spans`. El código actual registra el span manual de entrada como `task`, por lo que el filtro reproducible es:
+
+```text
+name == "task"
+```
+
+Para la pausa humana, usá:
+
+```text
+name == "hitl"
+```
+
+Un `GraphInterrupt` mientras el trabajo está en `WAITING_APPROVAL` es el comportamiento esperado de HITL, no un fallo. Para latencia, revisá `Traces -> Trace latency -> P95`.
+
+## 13. Screenshots
+
+Las evidencias deben ser capturas reales del dashboard Phoenix, no imágenes simuladas:
+
+| Archivo requerido | Evidencia | Estado actual |
+| --- | --- | --- |
+| `screenshots/01_traces.png` | Cinco peticiones concurrentes visibles | Captura real disponible |
+| `screenshots/02_cost_per_execution.png` | Modelo, input tokens, output tokens, total tokens y costo Phoenix con Gemini 3.8 Flash | Captura real disponible |
+| `screenshots/03_latency_p95.png` | P95 visible en Phoenix | Captura real disponible |
+| `screenshots/04_hitl_trace.png` | Pausa HITL y `GraphInterrupt` visibles en Phoenix | Captura real disponible |
+
+## 14. Tests
+
+```cmd
+python -m pytest
+```
+
+Resultado verificado actualmente: **63 tests passing**. Los tests usan fakes y no requieren OpenAI, Pinecone, Anthropic, Redis ni Phoenix reales.
+
+## 15. Estados
+
+| Estado | Significado |
+| --- | --- |
+| `PENDING` | El endpoint aceptó la tarea y la dejó en cola. |
+| `RUNNING` | El worker procesa el grafo de LangGraph. |
+| `WAITING_APPROVAL` | El flujo HITL está pausado y espera decisión humana. |
+| `DONE` | El grafo completó su respuesta final. |
+| `FAILED` | El worker encontró una excepción controlada. |
+| `REJECTED` | La persona rechazó una acción que requería aprobación. |
+
+## 16. Manejo de errores
+
+Si el worker produce una excepción, la transición es `RUNNING -> FAILED`. El mensaje de error se guarda junto con el job en Redis y puede consultarse con `GET /tasks/JOB_ID`.
+
+## 17. Checkpoints
+
+Se usan dos mecanismos diferentes en Redis:
+
+1. **`RedisJobStore`** en `app/redis_state.py`: persiste el estado HTTP del job bajo `job:{uuid}`.
+2. **`AsyncRedisSaver`** en `app/main.py`: persiste checkpoints del `StateGraph` para reanudar HITL.
+
+Ambos se vinculan mediante `thread_id = job_id`. Por eso la aprobación continúa el estado guardado del grafo y no crea una ejecución nueva desde el inicio.
+
+## 18. Detener servicios
+
+- `Ctrl+C` en la terminal de FastAPI.
+- `Ctrl+C` en la terminal de Phoenix.
+- Para detener Redis:
+
+```cmd
+docker compose down
+```
+
+`docker compose down` no elimina necesariamente el volumen persistente. No uses opciones de borrado de volúmenes salvo que quieras eliminar explícitamente los datos locales.
+
+## 19. Checklist del profesor
+
+| Criterio | Cómo verificarlo | Archivo |
+| --- | --- | --- |
+| API async | `POST /tasks`, recibe `202` y responde sin esperar el worker | `app/main.py` |
+| Redis job state | `GET /tasks/JOB_ID` muestra job persistido | `app/redis_state.py` |
+| `FAILED` | Simular error o ejecutar `tests/test_worker.py` | `app/worker.py`, `tests/test_worker.py` |
+| AsyncRedisSaver | Iniciar Redis y ejecutar flujo HITL | `app/main.py` |
+| Phoenix | Abrir proyecto `multi-agent-api` y filtrar `name == "task"` | `app/observability.py` |
+| HITL | Enviar la consulta crítica de la sección 10 | `app/hitl.py` |
+| `/approve` | Aprobar o rechazar `WAITING_APPROVAL` | `app/main.py` |
+| Cinco concurrentes | Ejecutar `python scripts/load_test.py` | `scripts/load_test.py` |
+| p95 | Revisar la salida del script y Phoenix | `scripts/load_test.py` |
+| Costo | Usar `USE_LLM=true` y captura Phoenix real | `app/llm.py` |
+| Tests | Ejecutar `python -m pytest` | `tests/` |
+| Screenshots | Verificar las cuatro capturas reales listadas en la sección 13 | `screenshots/` |

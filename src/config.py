@@ -22,6 +22,13 @@ PINECONE_INDEX_NAME = os.getenv("PINECONE_INDEX_NAME", "technical-rag")
 PINECONE_NAMESPACE = os.getenv("PINECONE_NAMESPACE", "technical-docs")
 PINECONE_CLOUD = os.getenv("PINECONE_CLOUD", "aws")
 PINECONE_REGION = os.getenv("PINECONE_REGION", "us-east-1")
+REDIS_URL = os.getenv("REDIS_URL", "redis://localhost:6379")
+USE_LLM = os.getenv("USE_LLM", "false").lower() == "true"
+API_LLM_PROVIDER = os.getenv("API_LLM_PROVIDER", "openai").lower()
+GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
+GEMINI_MODEL = os.getenv("GEMINI_MODEL", "gemini-3.8-flash")
+PHOENIX_COLLECTOR_ENDPOINT = os.getenv("PHOENIX_COLLECTOR_ENDPOINT", "http://localhost:6006/v1/traces")
+PHOENIX_PROJECT_NAME = os.getenv("PHOENIX_PROJECT_NAME", "multi-agent-api")
 
 _persist_dir = Path(os.getenv("CHROMA_PERSIST_DIR", "vectorstore"))
 CHROMA_PERSIST_DIR = (
